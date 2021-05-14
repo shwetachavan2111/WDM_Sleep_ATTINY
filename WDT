@@ -48,7 +48,7 @@ void WDT_Setup(void){
 		MCUSR &= ~(1<<WDRF);                    //To clear WDE,WDRF must be cleared first
 		WDTCR &= ~(1<<WDE);                
 													
-		//Set new Pre-scaler(time-out) value = 128K (131072) cycles 1.0 s
+		//Set new Pre-scaler(time-out) value
 		WDTCR |= (1<<WDP3);   //4sec                 
 }
 
