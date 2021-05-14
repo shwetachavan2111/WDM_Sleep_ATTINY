@@ -1,0 +1,61 @@
+#define F_CPU 9600000UL											          // System Clock 9.6 MHz, Built in Resonator
+#define LED PB0													              // LED is Connected to PB0 (Pin5) of AT tiny 13A
+
+#include <avr/io.h>
+#include <avr/sleep.h>
+#include <util/delay.h>
+#include <avr/interrupt.h>
+
+//Function Declaration
+void WDT_Setup(void);
+void Operation(void);
+
+ISR(WDT_vect){
+      PORTB |= (1<<LED);
+	    _delay_ms(100);
+	    PORTB &= ~(1<<LED);
+	    _delay_ms(100);
+}
+
+int main (void){
+	    DDRB |= (1 << LED);										               //Set Direction of LED as Output
+	    while(1){
+		        WDT_Setup();
+			
+		        // Enter Sleep Mode
+	        	MCUCR |= (1<<SM1); 		                             // Sleep Mode is Set (MCUCR Register SM1=1,SM0=0---Power Down)  (set_sleep_mode(SLEEP_MODE_PWR_DOWN);)
+		        MCUCR &= ~(1<<SM0);
+		
+		        MCUCR |= (1<<SE); 							 // Enables the Sleep Bit in the MCUSR register.             sleep_enable();	        
+		        sleep_mode();								 // System actually Sleeps here
+		
+		        MCUCR &= ~(1<<SE); 	                         //sleep_disable();
+	                                  
+		        //Switch to Normal Low Battery Indication and Intensity Control Operation 
+		        Operation();
+	    }
+	return 0;
+  }
+
+void WDT_Setup(void){
+		sei();                                   // Set Global Interrupt Enable.
+		
+		/* WDCE: Watchdog Change Enable.To clear the WDE bit,and/or change the Pre-scaler bits, WDCE must be set.
+		 * WDTIE: Watchdog Timer Interrupt Enable. When the I-bit in SREG and WDTIE are set, the Watchdog Time-out Interrupt is executed.
+		 */ 
+		WDTCR |= (1<<WDCE)|(1<<WDTIE);
+	    
+		MCUSR &= ~(1<<WDRF);                    //To clear WDE,WDRF must be cleared first
+		WDTCR &= ~(1<<WDE);                
+													
+		//Set new Pre-scaler(time-out) value = 128K (131072) cycles 1.0 s
+		WDTCR |= (1<<WDP3);   //4sec                 
+}
+
+
+void Operation(){
+	PORTB |= (1<<LED);
+}
+
+
+
