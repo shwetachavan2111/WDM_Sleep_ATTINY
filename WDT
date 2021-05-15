@@ -1,45 +1,49 @@
-#define F_CPU 9600000UL											          // System Clock 9.6 MHz, Built in Resonator
-#define LED PB0													              // LED is Connected to PB0 (Pin5) of AT tiny 13A
+#define F_CPU 9600000UL											// System Clock 9.6 MHz, Built in Resonator
+#define LED PB0													// LED is Connected to PB0 (Pin5) of AT tiny 13A
 
 #include <avr/io.h>
 #include <avr/sleep.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
 
+//Global variables
+volatile int adc_in=0;
+volatile int adc_batt=0;
+
 //Function Declaration
 void WDT_Setup(void);
 void Operation(void);
+void Sleep_setup(void);
+void adc_setup_ADC3_PB3();
+void adc_setup_ADC2_PB4();
+int adc_read(void);
+void pwm_setup (void);
 
 ISR(WDT_vect){
-      PORTB |= (1<<LED);
-	    _delay_ms(100);
-	    PORTB &= ~(1<<LED);
-	    _delay_ms(100);
+	DDRB |= (1 << LED);										   //Set Direction of LED as Output
+	pwm_setup();
 }
 
 int main (void){
-	    DDRB |= (1 << LED);										               //Set Direction of LED as Output
-	    while(1){
-		        WDT_Setup();
-			
-		        // Enter Sleep Mode
-	        	MCUCR |= (1<<SM1); 		                             // Sleep Mode is Set (MCUCR Register SM1=1,SM0=0---Power Down)  (set_sleep_mode(SLEEP_MODE_PWR_DOWN);)
-		        MCUCR &= ~(1<<SM0);
+	while(1){
+		WDT_Setup();
+		//Disable ADC before entering Sleep Mode
+		ADCSRA &= ~(1 << ADEN);	
 		
-		        MCUCR |= (1<<SE); 							 // Enables the Sleep Bit in the MCUSR register.             sleep_enable();	        
-		        sleep_mode();								 // System actually Sleeps here
-		
-		        MCUCR &= ~(1<<SE); 	                         //sleep_disable();
-	                                  
-		        //Switch to Normal Low Battery Indication and Intensity Control Operation 
-		        Operation();
-	    }
+		// Enter Sleep Mode
+		Sleep_setup();
+		sleep_mode();								 // System actually Sleeps here
+		MCUCR &= ~(1<<SE); 	                     //sleep_disable();
+		 
+		//Switch to Normal Low Battery Indication and Intensity Control Operation
+		Operation();
+	}
 	return 0;
-  }
+}
 
 void WDT_Setup(void){
 		sei();                                   // Set Global Interrupt Enable.
-		
+
 		/* WDCE: Watchdog Change Enable.To clear the WDE bit,and/or change the Pre-scaler bits, WDCE must be set.
 		 * WDTIE: Watchdog Timer Interrupt Enable. When the I-bit in SREG and WDTIE are set, the Watchdog Time-out Interrupt is executed.
 		 */ 
@@ -48,14 +52,81 @@ void WDT_Setup(void){
 		MCUSR &= ~(1<<WDRF);                    //To clear WDE,WDRF must be cleared first
 		WDTCR &= ~(1<<WDE);                
 													
-		//Set new Pre-scaler(time-out) value
-		WDTCR |= (1<<WDP3);   //4sec                 
+		//Set new Pre-scaler(time-out) value = 128K (131072) cycles 1.0 s
+		WDTCR |= (1<<WDP3);                     //4sec       
 }
 
+void Sleep_setup(){
+	MCUCR &= ~(1<<SM1); 		                     // Sleep Mode is Set (MCUCR Register SM1=0,SM0=0---Idle Mode)  (set_sleep_mode(SLEEP_MODE_PWR_DOWN);)
+	MCUCR &= ~(1<<SM0);
+	MCUCR |= (1<<SE); 							     // Enables the Sleep Bit in the MCUSR register. sleep_enable();
+}
 
 void Operation(){
-	PORTB |= (1<<LED);
+	adc_setup_ADC2_PB4();                               //Initially Set ADC Input To Battery
+	switch(ADMUX){
+		case 0x62:{
+			adc_batt = adc_read();                      //Read Battery Voltage
+			if(adc_batt <=150){					        //If battery voltage is less than 2V give LED blink Indication at 50%PWM Duty Cycle
+				OCR0A = 128;
+				_delay_ms(100);
+				OCR0A = 0;
+				_delay_ms(100);
+			}
+			else if(adc_batt > 150){                   //If Battery Voltage is Greater Than 2V switch ADC Input to PB3
+				adc_setup_ADC3_PB3();
+			}
+		}
+		
+		case 0x63:{
+			adc_in=adc_read();                         //Read Intensity Input
+			OCR0A = adc_in;                            //If Intensity Input is greater than 2V , change intensity of LED using PWM
+		}
+		
+		default:
+		break;
+	}
+	
+	
 }
+
+//Function to set up AD3 as Input
+//ADMUX = 01100011 = 63
+void adc_setup_ADC3_PB3(){
+	ADMUX |= (1 << ADLAR);										// ADC Left Adjust Result
+	ADMUX |= (1 << REFS0);										// Reference Selection Bit :Set Internal Voltage Reference 1.1V.
+	ADMUX |= (1<<MUX0)|(1<<MUX1);								// Set PB3(ADC3) as Intensity Input
+	ADCSRA |= (1 << ADPS2)| (1 << ADPS1) | (1 << ADPS0);		// ADC Prescaler Select Bits : 128 (111) ;  At 9.6 MHz this is 75 kHz.
+	ADCSRA |= (1 << ADEN);										// ADC Enable
+}
+
+//Function to set up AD2 as Input
+//ADMUX = 01100011 = 62
+void adc_setup_ADC2_PB4(){
+	ADMUX |= (1 << ADLAR);										// ADC Left Adjust Result
+	ADMUX |= (1 << REFS0);										// Reference Selection Bit :Set Internal Voltage Reference as 1.1V.
+	ADMUX |= (1<<MUX1);											// Set PB4 as battery input (MUX0 bit 0 and MUX1 bit 1)
+	ADMUX &= ~(1<<MUX0);
+	ADCSRA |= (1 << ADPS2)| (1 << ADPS1) | (1 << ADPS0);		// ADC Prescaler Select Bits : 128 (111) ;  At 9.6 MHz this is 75 kHz.
+	ADCSRA |= (1 << ADEN);										// ADC Enable
+}
+
+//Function to Perform Conversion
+int adc_read(void){
+	ADCSRA |= (1 << ADSC);										// Start the conversion
+	while (ADCSRA & (1 << ADSC));								// Wait for it to finish
+	return ADCH;
+}
+
+//Function to set up PWM parameters
+void pwm_setup (void){
+	TCCR0B |= (1 << CS00)|(1 << CS01);;							// Set Timer 0 Pr-escaler to clock/8. At 9.6 MHz this is 1.2 MHz.
+	TCCR0A |= (1 << WGM01) | (1 << WGM00);						// Set to 'Fast PWM' mode
+	TCCR0A |= (1 << COM0A1);									// Clear OC0A output on compare match, set OCOA at TOP
+}
+
+
+
 
 
 
